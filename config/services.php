@@ -18,9 +18,9 @@ return [
         'gateway'  => env('SMS_GATEWAY', 'routemobile'),
         'server'   => env('SMS_SERVER', 'apibd.rmlconnect.net'),
         'port'     => env('SMS_PORT', 80),
-        'username' => env('SMS_USERNAME'),
-        'password' => env('SMS_PASSWORD'),
-        'sender'   => env('SMS_SENDER'),
+        'username' => env('SMS_USERNAME','AsiaticExp'),
+        'password' => env('SMS_PASSWORD','AGwVDRYF'),
+        'sender'   => env('SMS_SENDER','8809617614054'),
 
         // Bulk SMS BD fallback
         'endpoint' => env('SMS_ENDPOINT'),

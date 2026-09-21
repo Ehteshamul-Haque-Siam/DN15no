@@ -65,8 +65,7 @@ class Registration extends Model
 
     public function hasPhoto(): bool
     {
-        return $this->photo
-            && Storage::disk('public')->exists($this->photo);
+        return $this->photo && Storage::disk('public')->exists($this->photo);
     }
 
     public function getPhotoUrlAttribute(): string
