@@ -81,16 +81,13 @@ class SmsService
      */
     protected function sendViaRouteMobile(string $phone, string $message): array
     {
-        // Bengali text must go as type=2 with the message encoded as UTF-16BE hex.
-        $isBengali = preg_match('/[\x{0980}-\x{09FF}]/u', $message) === 1;
-
+        // Bengali is sent as plain UTF-8 — the gateway delivers hex-encoded text literally.
         $response = Http::get('http://apibd.rmlconnect.net/bulksms/personalizedbulksms', [
             'username' => config('services.sms.username'),
             'password' => config('services.sms.password'),
             'source' => config('services.sms.sender'),
             'destination' => '88'.$phone,
-            'type' => $isBengali ? 2 : 0,
-            'message' => $isBengali ? strtoupper(bin2hex(mb_convert_encoding($message, 'UTF-16BE', 'UTF-8'))) : $message,
+            'message' => $message,
         ]);
 
         return [

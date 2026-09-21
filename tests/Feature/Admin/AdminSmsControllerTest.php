@@ -39,12 +39,11 @@ class AdminSmsControllerTest extends TestCase
             ->assertRedirect();
 
         Http::assertSent(fn (Request $request) => $request['destination'] === '8801635227460'
-            && $request['type'] === 0
             && $request['message'] === 'Hello');
         $this->assertSame('sent', SmsLog::sole()->status);
     }
 
-    public function test_bengali_message_is_sent_as_unicode_hex(): void
+    public function test_bengali_message_is_sent_as_plain_utf8_text(): void
     {
         Http::preventStrayRequests();
         Http::fake([self::GATEWAY => Http::response('1701|8801635227460|msg-2')]);
@@ -54,8 +53,8 @@ class AdminSmsControllerTest extends TestCase
             ->post(route('admin.sms.test'), ['mobile' => '01635227460', 'message' => 'কখ'])
             ->assertRedirect();
 
-        Http::assertSent(fn (Request $request) => $request['type'] === 2
-            && $request['message'] === '09950996');
+        Http::assertSent(fn (Request $request) => $request['message'] === 'কখ'
+            && ! isset($request['type']));
     }
 
     public function test_resend_marks_log_failed_for_number_not_in_01_format(): void
