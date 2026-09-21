@@ -24,7 +24,7 @@ class AdminDashboardController extends Controller
         $pendingVerification = Registration::where('payment_status', 'pending')
             ->whereNotNull('mfs_trn')
             ->latest()
-            ->take(5)
+            ->take(10)
             ->get();
 
         return view('admin.dashboard', compact('stats', 'recent', 'pendingVerification'));

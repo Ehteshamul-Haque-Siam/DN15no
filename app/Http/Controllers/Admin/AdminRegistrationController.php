@@ -6,19 +6,31 @@ use App\Http\Controllers\Controller;
 use App\Models\Registration;
 use App\Services\SmsService;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Response;
 
 class AdminRegistrationController extends Controller
 {
+    /**
+     * List registrations with optional filters:
+     *   ?payment=pending|paid|verified|rejected
+     *   ?status=pending|approved|rejected
+     *   ?search=...
+     */
     public function index(Request $request)
     {
         $query = Registration::query();
 
-        if ($request->filled('status')) {
-            $query->where('approval_status', $request->status);
-        }
+        // Filter by payment status
         if ($request->filled('payment')) {
             $query->where('payment_status', $request->payment);
         }
+
+        // Filter by approval status
+        if ($request->filled('status')) {
+            $query->where('approval_status', $request->status);
+        }
+
+        // Search across key fields
         if ($request->filled('search')) {
             $s = $request->search;
             $query->where(function ($q) use ($s) {
@@ -30,7 +42,10 @@ class AdminRegistrationController extends Controller
             });
         }
 
-        $registrations = $query->latest()->paginate(20)->withQueryString();
+        // Paginate — withQueryString() keeps filters across pages
+        $registrations = $query->latest()
+            ->paginate(20)
+            ->withQueryString();
 
         return view('admin.registrations.index', compact('registrations'));
     }
@@ -74,7 +89,7 @@ class AdminRegistrationController extends Controller
 
         $sms->send(
             $registration->contact_no,
-            "দুঃখিত {$registration->name_bn}, আপনার পেমেন্ট যাচাই ব্যর্থ হয়েছে। কারণ: {$request->remarks}",
+            "দুঃখিত {$registration->name_bn}, পেমেন্ট যাচাই ব্যর্থ হয়েছে। কারণ: {$request->remarks}",
             'rejection',
             $registration->id
         );
@@ -100,7 +115,7 @@ class AdminRegistrationController extends Controller
 
         $sms->send(
             $registration->contact_no,
-            "অভিনন্দন {$registration->name_bn}! আপনার সদস্যপদ অনুমোদিত হয়েছে। Reg ID: {$registration->registration_id}। ধন্যবাদ।",
+            "অভিনন্দন {$registration->name_bn}! সদস্যপদ অনুমোদিত। Reg ID: {$registration->registration_id}",
             'approval',
             $registration->id
         );
@@ -119,7 +134,7 @@ class AdminRegistrationController extends Controller
 
         $sms->send(
             $registration->contact_no,
-            "দুঃখিত {$registration->name_bn}, আপনার আবেদন প্রত্যাখ্যাত হয়েছে। কারণ: {$request->remarks}। যোগাযোগ: 01721308219",
+            "দুঃখিত {$registration->name_bn}, আবেদন প্রত্যাখ্যাত। কারণ: {$request->remarks}",
             'rejection',
             $registration->id
         );
@@ -145,21 +160,29 @@ class AdminRegistrationController extends Controller
                     'verified_by'    => auth()->id(),
                     'verified_at'    => now(),
                 ]);
-                $sms->send($reg->contact_no,
+                $sms->send(
+                    $reg->contact_no,
                     "প্রিয় {$reg->name_bn}, আপনার পেমেন্ট যাচাই হয়েছে। সদস্যপদ অনুমোদনের অপেক্ষায় আছেন।",
-                    'payment', $reg->id);
+                    'payment',
+                    $reg->id
+                );
                 $count++;
-            } elseif ($request->action === 'approve'
-                    && $reg->payment_status === 'verified'
-                    && $reg->approval_status !== 'approved') {
+            } elseif (
+                $request->action === 'approve'
+                && $reg->payment_status === 'verified'
+                && $reg->approval_status !== 'approved'
+            ) {
                 $reg->update([
                     'approval_status' => 'approved',
                     'approved_at'     => now(),
                     'approved_by'     => auth()->id(),
                 ]);
-                $sms->send($reg->contact_no,
+                $sms->send(
+                    $reg->contact_no,
                     "অভিনন্দন {$reg->name_bn}! সদস্যপদ অনুমোদিত। Reg ID: {$reg->registration_id}",
-                    'approval', $reg->id);
+                    'approval',
+                    $reg->id
+                );
                 $count++;
             }
         }
@@ -186,10 +209,23 @@ class AdminRegistrationController extends Controller
             Registration::chunk(500, function ($rows) use ($file) {
                 foreach ($rows as $r) {
                     fputcsv($file, [
-                        $r->registration_id, $r->name_en, $r->name_bn, $r->nickname,
-                        $r->father_en, $r->mother_en, $r->flat, $r->from_year, $r->to_year,
-                        $r->contact_no, $r->email, $r->occupation, $r->membership_fee,
-                        $r->mfs_trn, $r->payment_status, $r->approval_status, $r->created_at,
+                        $r->registration_id,
+                        $r->name_en,
+                        $r->name_bn,
+                        $r->nickname,
+                        $r->father_en,
+                        $r->mother_en,
+                        $r->flat,
+                        $r->from_year,
+                        $r->to_year,
+                        $r->contact_no,
+                        $r->email,
+                        $r->occupation,
+                        $r->membership_fee,
+                        $r->mfs_trn,
+                        $r->payment_status,
+                        $r->approval_status,
+                        $r->created_at,
                     ]);
                 }
             });
@@ -197,7 +233,6 @@ class AdminRegistrationController extends Controller
             fclose($file);
         };
 
-        return response()->stream($callback, 200, $headers);
+        return Response::stream($callback, 200, $headers);
     }
-
 }
