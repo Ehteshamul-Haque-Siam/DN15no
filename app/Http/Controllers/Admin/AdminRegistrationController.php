@@ -1,0 +1,203 @@
+<?php
+
+namespace App\Http\Controllers\Admin;
+
+use App\Http\Controllers\Controller;
+use App\Models\Registration;
+use App\Services\SmsService;
+use Illuminate\Http\Request;
+
+class AdminRegistrationController extends Controller
+{
+    public function index(Request $request)
+    {
+        $query = Registration::query();
+
+        if ($request->filled('status')) {
+            $query->where('approval_status', $request->status);
+        }
+        if ($request->filled('payment')) {
+            $query->where('payment_status', $request->payment);
+        }
+        if ($request->filled('search')) {
+            $s = $request->search;
+            $query->where(function ($q) use ($s) {
+                $q->where('registration_id', 'like', "%$s%")
+                  ->orWhere('name_en', 'like', "%$s%")
+                  ->orWhere('name_bn', 'like', "%$s%")
+                  ->orWhere('contact_no', 'like', "%$s%")
+                  ->orWhere('mfs_trn', 'like', "%$s%");
+            });
+        }
+
+        $registrations = $query->latest()->paginate(20)->withQueryString();
+
+        return view('admin.registrations.index', compact('registrations'));
+    }
+
+    public function show(Registration $registration)
+    {
+        return view('admin.registrations.show', compact('registration'));
+    }
+
+    public function verifyPayment(Registration $registration, SmsService $sms)
+    {
+        if ($registration->payment_status === 'verified') {
+            return back()->with('success', 'Payment already verified.');
+        }
+
+        $registration->update([
+            'payment_status' => 'verified',
+            'paid_at'        => $registration->paid_at ?? now(),
+            'verified_by'    => auth()->id(),
+            'verified_at'    => now(),
+        ]);
+
+        $sms->send(
+            $registration->contact_no,
+            "প্রিয় {$registration->name_bn}, আপনার পেমেন্ট যাচাই হয়েছে। সদস্যপদ অনুমোদনের অপেক্ষায় আছেন।",
+            'payment',
+            $registration->id
+        );
+
+        return back()->with('success', "Payment verified for {$registration->registration_id}.");
+    }
+
+    public function rejectPayment(Request $request, Registration $registration, SmsService $sms)
+    {
+        $request->validate(['remarks' => 'required|string|max:255']);
+
+        $registration->update([
+            'payment_status' => 'rejected',
+            'admin_remarks'  => $request->remarks,
+        ]);
+
+        $sms->send(
+            $registration->contact_no,
+            "দুঃখিত {$registration->name_bn}, আপনার পেমেন্ট যাচাই ব্যর্থ হয়েছে। কারণ: {$request->remarks}",
+            'rejection',
+            $registration->id
+        );
+
+        return back()->with('success', 'Payment rejected.');
+    }
+
+    public function approve(Registration $registration, SmsService $sms)
+    {
+        if ($registration->payment_status !== 'verified') {
+            return back()->withErrors(['error' => 'Cannot approve before payment is verified.']);
+        }
+
+        if ($registration->approval_status === 'approved') {
+            return back()->with('success', 'Already approved.');
+        }
+
+        $registration->update([
+            'approval_status' => 'approved',
+            'approved_at'     => now(),
+            'approved_by'     => auth()->id(),
+        ]);
+
+        $sms->send(
+            $registration->contact_no,
+            "অভিনন্দন {$registration->name_bn}! আপনার সদস্যপদ অনুমোদিত হয়েছে। Reg ID: {$registration->registration_id}। ধন্যবাদ।",
+            'approval',
+            $registration->id
+        );
+
+        return back()->with('success', "{$registration->registration_id} approved.");
+    }
+
+    public function reject(Request $request, Registration $registration, SmsService $sms)
+    {
+        $request->validate(['remarks' => 'required|string|max:255']);
+
+        $registration->update([
+            'approval_status' => 'rejected',
+            'admin_remarks'   => $request->remarks,
+        ]);
+
+        $sms->send(
+            $registration->contact_no,
+            "দুঃখিত {$registration->name_bn}, আপনার আবেদন প্রত্যাখ্যাত হয়েছে। কারণ: {$request->remarks}। যোগাযোগ: 01721308219",
+            'rejection',
+            $registration->id
+        );
+
+        return back()->with('success', 'Registration rejected.');
+    }
+
+    public function bulkAction(Request $request, SmsService $sms)
+    {
+        $request->validate([
+            'ids'    => 'required|array',
+            'ids.*'  => 'exists:registrations,id',
+            'action' => 'required|in:approve,verify',
+        ]);
+
+        $count = 0;
+
+        foreach (Registration::whereIn('id', $request->ids)->get() as $reg) {
+            if ($request->action === 'verify' && $reg->payment_status !== 'verified') {
+                $reg->update([
+                    'payment_status' => 'verified',
+                    'paid_at'        => $reg->paid_at ?? now(),
+                    'verified_by'    => auth()->id(),
+                    'verified_at'    => now(),
+                ]);
+                $sms->send($reg->contact_no,
+                    "প্রিয় {$reg->name_bn}, আপনার পেমেন্ট যাচাই হয়েছে। সদস্যপদ অনুমোদনের অপেক্ষায় আছেন।",
+                    'payment', $reg->id);
+                $count++;
+            } elseif ($request->action === 'approve'
+                    && $reg->payment_status === 'verified'
+                    && $reg->approval_status !== 'approved') {
+                $reg->update([
+                    'approval_status' => 'approved',
+                    'approved_at'     => now(),
+                    'approved_by'     => auth()->id(),
+                ]);
+                $sms->send($reg->contact_no,
+                    "অভিনন্দন {$reg->name_bn}! সদস্যপদ অনুমোদিত। Reg ID: {$reg->registration_id}",
+                    'approval', $reg->id);
+                $count++;
+            }
+        }
+
+        return back()->with('success', "{$count} registrations processed.");
+    }
+
+    public function export()
+    {
+        $headers = [
+            'Content-Type'        => 'text/csv',
+            'Content-Disposition' => 'attachment; filename="registrations_' . date('Ymd_His') . '.csv"',
+        ];
+
+        $callback = function () {
+            $file = fopen('php://output', 'w');
+            fputcsv($file, [
+                'Reg ID', 'Name (EN)', 'Name (BN)', 'Nickname',
+                'Father', 'Mother', 'Flat', 'From', 'To',
+                'Contact', 'Email', 'Occupation',
+                'Fee', 'TRN', 'Payment Status', 'Approval Status', 'Created At',
+            ]);
+
+            Registration::chunk(500, function ($rows) use ($file) {
+                foreach ($rows as $r) {
+                    fputcsv($file, [
+                        $r->registration_id, $r->name_en, $r->name_bn, $r->nickname,
+                        $r->father_en, $r->mother_en, $r->flat, $r->from_year, $r->to_year,
+                        $r->contact_no, $r->email, $r->occupation, $r->membership_fee,
+                        $r->mfs_trn, $r->payment_status, $r->approval_status, $r->created_at,
+                    ]);
+                }
+            });
+
+            fclose($file);
+        };
+
+        return response()->stream($callback, 200, $headers);
+    }
+
+}
