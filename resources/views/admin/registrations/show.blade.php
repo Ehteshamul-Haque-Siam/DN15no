@@ -8,7 +8,6 @@
     @if(session('success')) <div class="alert alert-success">{{ session('success') }}</div> @endif
     @if($errors->any()) <div class="alert alert-danger">{{ $errors->first() }}</div> @endif
 
-    {{-- Workflow banner --}}
     <div class="alert alert-{{ $registration->approval_status==='approved' ? 'success' : ($registration->approval_status==='rejected' ? 'danger' : 'warning') }} d-flex justify-content-between align-items-center flex-wrap gap-2">
         <div>
             <strong>Workflow Status:</strong>
@@ -76,17 +75,33 @@
                         </div>
                     </div>
 
+                    {{-- ============ ACTION BUTTONS ============ --}}
                     <div class="d-flex flex-wrap gap-2 mt-3">
+
+                        {{-- NEW: bKash realtime query --}}
+                        <form method="POST" action="{{ route('admin.query.bkash', $registration->id) }}">
+                            @csrf
+                            <button class="btn btn-info text-white"
+                                    onclick="return confirm('Query bKash API for transaction {{ $registration->mfs_trn }}?')">
+                                <i class="fa fa-search"></i> Query bKash
+                            </button>
+                        </form>
+
+                        {{-- Manual verify --}}
                         @if($registration->payment_status !== 'verified')
                             <form method="POST" action="{{ route('admin.verify.payment', $registration->id) }}">
                                 @csrf
-                                <button class="btn btn-success"><i class="fa fa-check"></i> Verify Payment</button>
+                                <button class="btn btn-success">
+                                    <i class="fa fa-check"></i> Verify Manually
+                                </button>
                             </form>
                         @endif
+
+                        {{-- Reject payment --}}
                         @if($registration->payment_status !== 'rejected')
                             <form method="POST" action="{{ route('admin.reject.payment', $registration->id) }}" class="d-flex gap-2 flex-wrap">
                                 @csrf
-                                <input type="text" name="remarks" class="form-control" placeholder="Reason for rejection" required style="max-width:220px;">
+                                <input type="text" name="remarks" class="form-control" placeholder="Reason" required style="max-width:220px;">
                                 <button class="btn btn-outline-danger">Reject Payment</button>
                             </form>
                         @endif
@@ -112,7 +127,7 @@
                         @if($registration->approval_status !== 'rejected')
                             <form method="POST" action="{{ route('admin.reject', $registration->id) }}" class="d-flex gap-2 flex-wrap">
                                 @csrf
-                                <input type="text" name="remarks" class="form-control" placeholder="Reason for rejection" required style="max-width:220px;">
+                                <input type="text" name="remarks" class="form-control" placeholder="Reason" required style="max-width:220px;">
                                 <button class="btn btn-outline-danger">Reject Application</button>
                             </form>
                         @endif
@@ -128,7 +143,6 @@
         </div>
 
         <div class="col-lg-4">
-            {{-- Photo card with fallback --}}
             <div class="card shadow-soft">
                 <div class="card-body text-center">
                     @if($registration->hasPhoto())
@@ -136,18 +150,9 @@
                              class="img-fluid rounded mb-3"
                              alt="Applicant Photo"
                              style="max-height:280px;object-fit:cover;"
-                             onerror="this.onerror=null; this.parentNode.querySelector('.no-photo').style.display='block'; this.style.display='none';">
-
-                        <div class="bg-light border rounded d-flex align-items-center justify-content-center mb-3 no-photo"
-                             style="height:180px; display:none !important;">
-                            <div class="text-center text-muted">
-                                <div style="font-size:36px;">📷</div>
-                                <small>Image file missing</small>
-                            </div>
-                        </div>
+                             onerror="this.parentNode.innerHTML='<div class=\'text-muted py-4\'>📷 Image missing</div>';">
                     @else
-                        <div class="bg-light border rounded d-flex align-items-center justify-content-center mb-3"
-                             style="height:180px;">
+                        <div class="bg-light border rounded d-flex align-items-center justify-content-center mb-3" style="height:180px;">
                             <div class="text-center text-muted">
                                 <div style="font-size:36px;">📷</div>
                                 <small>No photo uploaded</small>
@@ -158,7 +163,6 @@
                 </div>
             </div>
 
-            {{-- SMS history --}}
             <div class="card shadow-soft mt-3">
                 <div class="card-header"><strong>SMS History</strong></div>
                 <div class="card-body p-2" style="max-height:300px;overflow-y:auto;">

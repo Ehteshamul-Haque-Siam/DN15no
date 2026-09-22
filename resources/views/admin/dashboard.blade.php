@@ -40,6 +40,46 @@
         @endforeach
     </div>
 
+    {{-- bKash Realtime Monitoring --}}
+<div class="row g-3 mb-4">
+    <div class="col-6 col-md-3">
+        <div class="card text-center shadow-soft border-0">
+            <div class="card-body">
+                <i class="fa fa-hourglass-half text-warning" style="font-size:22px;"></i>
+                <div class="text-muted small">Pending bKash Queries</div>
+                <h3 class="text-warning mt-1 mb-0">{{ $bkashStats['pending_query'] }}</h3>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+        <div class="card text-center shadow-soft border-0">
+            <div class="card-body">
+                <i class="fa fa-check-circle text-success" style="font-size:22px;"></i>
+                <div class="text-muted small">Verified Today</div>
+                <h3 class="text-success mt-1 mb-0">{{ $bkashStats['verified_today'] }}</h3>
+            </div>
+        </div>
+    </div>
+    <div class="col-6 col-md-3">
+            <div class="card text-center shadow-soft border-0">
+                <div class="card-body">
+                    <i class="fa fa-money text-primary" style="font-size:22px;"></i>
+                    <div class="text-muted small">Revenue Today</div>
+                        <h4 class="text-primary mt-1 mb-0">৳ {{ number_format($bkashStats['revenue_today'], 2) }}</h4>
+                        </div>
+                </div>
+            </div>
+        <div class="col-6 col-md-3">
+            <div class="card text-center shadow-soft border-0">
+                <div class="card-body">
+                    <i class="fa fa-line-chart text-info" style="font-size:22px;"></i>
+                    <div class="text-muted small">Revenue This Month</div>
+                    <h4 class="text-info mt-1 mb-0">৳ {{ number_format($bkashStats['revenue_month'], 2) }}</h4>
+                </div>
+            </div>
+        </div>
+    </div>
+
     {{-- Revenue + Quick links --}}
     <div class="row g-3 mb-4">
         <div class="col-md-6">

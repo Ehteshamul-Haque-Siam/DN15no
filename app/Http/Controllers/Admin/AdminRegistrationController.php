@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
 use App\Models\Registration;
+use App\Services\BkashService;
 use App\Services\SmsService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -11,9 +12,6 @@ use Illuminate\Support\Facades\Response;
 
 class AdminRegistrationController extends Controller
 {
-    /* -----------------------------------------------------------------
-     | Audit helper — log every sensitive admin action
-     * ----------------------------------------------------------------- */
     protected function audit(string $action, Registration $reg, array $extra = []): void
     {
         Log::info('ADMIN_ACTION', [
@@ -28,9 +26,6 @@ class AdminRegistrationController extends Controller
         ]);
     }
 
-    /* -----------------------------------------------------------------
-     | List
-     * ----------------------------------------------------------------- */
     public function index(Request $request)
     {
         $query = Registration::query();
@@ -62,9 +57,64 @@ class AdminRegistrationController extends Controller
         return view('admin.registrations.show', compact('registration'));
     }
 
-    /* -----------------------------------------------------------------
-     | Payment actions
-     * ----------------------------------------------------------------- */
+    /**
+     * NEW — Query bKash API for real-time transaction status.
+     * Auto-verifies if the payment is Completed and amount matches.
+     */
+    public function queryBkash(Registration $registration, BkashService $bkash)
+    {
+        if (empty($registration->mfs_trn)) {
+            return back()->withErrors(['bkash' => 'No TRN submitted for this registration.']);
+        }
+
+        try {
+            $result = $bkash->searchTransaction($registration->mfs_trn);
+
+            if (!$result['success']) {
+                return back()->withErrors([
+                    'bkash' => 'bKash lookup failed: ' . ($result['statusMessage'] ?? 'Unknown response'),
+                ]);
+            }
+
+            $this->audit('query_bkash', $registration, [
+                'trx_id' => $registration->mfs_trn,
+                'status' => $result['transactionStatus'],
+                'amount' => $result['amount'],
+            ]);
+
+            if ($result['transactionStatus'] === 'Completed') {
+                $expected = (float) $registration->membership_fee;
+                $actual   = (float) $result['amount'];
+
+                if (abs($expected - $actual) < 0.01) {
+                    if ($registration->payment_status !== 'verified') {
+                        $registration->update([
+                            'payment_status' => 'verified',
+                            'paid_at'        => $result['paymentExecuteTime'] ?? now(),
+                            'verified_by'    => auth()->id(),
+                            'verified_at'    => now(),
+                            'admin_remarks'  => 'Auto-verified via bKash API query',
+                        ]);
+
+                        return back()->with('success',
+                            "✅ bKash confirmed ৳{$actual}. Payment auto-verified.");
+                    }
+                    return back()->with('success',
+                        "bKash shows Completed ৳{$actual} (already verified).");
+                }
+
+                return back()->withErrors([
+                    'bkash' => "Amount mismatch: bKash shows ৳{$actual}, expected ৳{$expected}.",
+                ]);
+            }
+
+            return back()->with('success',
+                "bKash status: {$result['transactionStatus']}. Not yet completed.");
+        } catch (\Throwable $e) {
+            return back()->withErrors(['bkash' => 'bKash error: ' . $e->getMessage()]);
+        }
+    }
+
     public function verifyPayment(Registration $registration, SmsService $sms)
     {
         if ($registration->payment_status === 'verified') {
@@ -111,9 +161,6 @@ class AdminRegistrationController extends Controller
         return back()->with('success', 'Payment rejected.');
     }
 
-    /* -----------------------------------------------------------------
-     | Approval actions
-     * ----------------------------------------------------------------- */
     public function approve(Registration $registration, SmsService $sms)
     {
         if ($registration->payment_status !== 'verified') {
@@ -163,9 +210,6 @@ class AdminRegistrationController extends Controller
         return back()->with('success', 'Registration rejected.');
     }
 
-    /* -----------------------------------------------------------------
-     | Bulk action
-     * ----------------------------------------------------------------- */
     public function bulkAction(Request $request, SmsService $sms)
     {
         $request->validate([
@@ -210,9 +254,6 @@ class AdminRegistrationController extends Controller
         return back()->with('success', "{$count} registrations processed.");
     }
 
-    /* -----------------------------------------------------------------
-     | Export
-     * ----------------------------------------------------------------- */
     public function export()
     {
         $headers = [

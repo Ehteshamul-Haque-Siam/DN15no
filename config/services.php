@@ -11,6 +11,7 @@ return [
 
     'bkash' => [
         'merchant_number' => env('BKASH_MERCHANT_NUMBER', '01761983617'),
+        'webhook_secret'  => env('BKASH_WEBHOOK_SECRET'),
     ],
 
     'sms' => [
@@ -21,7 +22,6 @@ return [
         'username' => env('SMS_USERNAME'),
         'password' => env('SMS_PASSWORD'),
         'sender'   => env('SMS_SENDER'),
-
         'endpoint' => env('SMS_ENDPOINT'),
         'key'      => env('SMS_API_KEY'),
     ],

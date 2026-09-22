@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\BkashCredential;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
+use Illuminate\Support\Facades\Log;
 
 class BkashService
 {
@@ -32,28 +33,60 @@ class BkashService
                 'app_secret' => $this->cred->app_secret,
             ])->json();
 
-            return $res['id_token'] ?? throw new \Exception('bKash token grant failed: ' . json_encode($res));
+            $token = $res['id_token'] ?? null;
+            if (!$token) {
+                Log::error('bKash token grant failed', $res);
+                throw new \Exception('bKash token grant failed: ' . json_encode($res));
+            }
+
+            return $token;
         });
     }
 
     public function createPayment(array $data): array
     {
-        return Http::withToken($this->grantToken())
-            ->post("{$this->baseUrl}/tokenized/checkout/create", $data)
-            ->json();
+        return Http::withHeaders([
+            'Authorization' => $this->grantToken(),
+            'X-APP-Key'     => $this->cred->app_key,
+        ])->post("{$this->baseUrl}/tokenized/checkout/create", $data)->json();
     }
 
     public function executePayment(string $paymentId): array
     {
-        return Http::withToken($this->grantToken())
-            ->post("{$this->baseUrl}/tokenized/checkout/execute", ['paymentID' => $paymentId])
-            ->json();
+        return Http::withHeaders([
+            'Authorization' => $this->grantToken(),
+            'X-APP-Key'     => $this->cred->app_key,
+        ])->post("{$this->baseUrl}/tokenized/checkout/execute", [
+            'paymentID' => $paymentId,
+        ])->json();
     }
 
-    public function queryPayment(string $paymentId): array
+    /**
+     * Search a bKash transaction by TrxID.
+     * Used to verify a TRN a user submitted.
+     */
+    public function searchTransaction(string $trxId): array
     {
-        return Http::withToken($this->grantToken())
-            ->post("{$this->baseUrl}/tokenized/checkout/payment/status", ['paymentID' => $paymentId])
-            ->json();
+        $response = Http::withHeaders([
+            'Authorization' => $this->grantToken(),
+            'X-APP-Key'     => $this->cred->app_key,
+        ])->post("{$this->baseUrl}/tokenized/checkout/general/search-transaction", [
+            'trxID' => $trxId,
+        ]);
+
+        $body = $response->json() ?? [];
+
+        return [
+            'success'            => $response->successful()
+                                    && !empty($body['transactionStatus']),
+            'raw'                => $body,
+            'transactionStatus'  => $body['transactionStatus'] ?? null,
+            'amount'             => $body['amount'] ?? null,
+            'currency'           => $body['currency'] ?? 'BDT',
+            'customerMsisdn'     => $body['customerMsisdn'] ?? null,
+            'trxID'              => $body['trxID'] ?? $trxId,
+            'paymentExecuteTime' => $body['paymentExecuteTime'] ?? null,
+            'statusMessage'      => $body['statusMessage'] ?? null,
+        ];
     }
 }

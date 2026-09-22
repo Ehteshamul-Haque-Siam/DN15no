@@ -19,6 +19,19 @@ class AdminDashboardController extends Controller
             'revenue'  => Registration::where('payment_status', 'verified')->sum('membership_fee'),
         ];
 
+        $bkashStats = [
+            'pending_query'  => Registration::where('payment_status', 'pending')
+                                    ->whereNotNull('mfs_trn')->count(),
+            'verified_today' => Registration::where('payment_status', 'verified')
+                                    ->whereDate('verified_at', today())->count(),
+            'revenue_today'  => Registration::where('payment_status', 'verified')
+                                    ->whereDate('verified_at', today())->sum('membership_fee'),
+            'revenue_month'  => Registration::where('payment_status', 'verified')
+                                    ->whereMonth('verified_at', now()->month)
+                                    ->whereYear('verified_at', now()->year)
+                                    ->sum('membership_fee'),
+        ];
+
         $recent = Registration::latest()->take(5)->get();
 
         $pendingVerification = Registration::where('payment_status', 'pending')
@@ -27,6 +40,6 @@ class AdminDashboardController extends Controller
             ->take(10)
             ->get();
 
-        return view('admin.dashboard', compact('stats', 'recent', 'pendingVerification'));
+        return view('admin.dashboard', compact('stats', 'recent', 'pendingVerification', 'bkashStats'));
     }
 }
