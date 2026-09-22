@@ -15,8 +15,13 @@ class UniqueResident implements ValidationRule
 
     public function validate(string $attribute, mixed $value, Closure $fail): void
     {
-        $exists = Registration::where('name_en', 'like', trim($this->nameEn))
-            ->where('father_en', 'like', trim($this->fatherEn))
+        // Skip if either name is empty (other rules will catch that)
+        if (empty($this->nameEn) || empty($this->fatherEn)) {
+            return;
+        }
+
+        $exists = Registration::whereRaw('LOWER(name_en) = ?', [mb_strtolower(trim($this->nameEn))])
+            ->whereRaw('LOWER(father_en) = ?', [mb_strtolower(trim($this->fatherEn))])
             ->exists();
 
         if ($exists) {
