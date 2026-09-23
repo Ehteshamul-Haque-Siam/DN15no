@@ -17,7 +17,7 @@ class AppServiceProvider extends ServiceProvider
 
     public function boot(): void
     {
-        // Force HTTPS in production
+        // Force HTTPS scheme in production
         if (app()->environment('production')) {
             URL::forceScheme('https');
         }
@@ -32,11 +32,17 @@ class AppServiceProvider extends ServiceProvider
         });
 
         RateLimiter::for('login', function (Request $request) {
-            return Limit::perMinute(5)->by($request->ip() . '|' . $request->input('email'));
+            return Limit::perMinute(5)->by(
+                $request->ip() . '|' . $request->input('email')
+            );
         });
 
         RateLimiter::for('admin-action', function (Request $request) {
             return Limit::perMinute(60)->by($request->user()?->id ?: $request->ip());
+        });
+
+        RateLimiter::for('webhook', function (Request $request) {
+            return Limit::perMinute(100)->by($request->ip());
         });
     }
 }

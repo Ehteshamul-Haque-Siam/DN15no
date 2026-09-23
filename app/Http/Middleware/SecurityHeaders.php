@@ -12,7 +12,6 @@ class SecurityHeaders
     {
         $response = $next($request);
 
-        // Basic hardening
         $response->headers->set('X-Content-Type-Options', 'nosniff');
         $response->headers->set('X-Frame-Options', 'SAMEORIGIN');
         $response->headers->set('Referrer-Policy', 'strict-origin-when-cross-origin');
@@ -20,7 +19,6 @@ class SecurityHeaders
         $response->headers->set('X-XSS-Protection', '1; mode=block');
         $response->headers->set('X-Permitted-Cross-Domain-Policies', 'none');
 
-        // HSTS — only when served over HTTPS
         if ($request->secure()) {
             $response->headers->set(
                 'Strict-Transport-Security',
@@ -28,7 +26,7 @@ class SecurityHeaders
             );
         }
 
-        // Content Security Policy — allows CDN we use for Bootstrap/FA/jQuery
+        // CSP — adjust if you use other CDNs
         $csp = implode('; ', [
             "default-src 'self'",
             "img-src 'self' data: https:",

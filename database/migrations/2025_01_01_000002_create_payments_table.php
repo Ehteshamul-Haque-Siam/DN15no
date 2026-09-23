@@ -8,23 +8,39 @@ return new class extends Migration
 {
     public function up(): void
     {
-        Schema::create('payments', function (Blueprint $table) {
-            $table->id();
-            $table->foreignId('registration_id')->constrained('registrations')->cascadeOnDelete();
-            $table->string('gateway')->default('bkash');
-            $table->string('payment_id')->nullable();
-            $table->string('trx_id')->nullable();
-            $table->decimal('amount', 10, 2);
-            $table->string('currency', 5)->default('BDT');
-            $table->string('payer_mobile')->nullable();
-            $table->enum('status', ['initiated', 'success', 'failed', 'refunded', 'pending_verification'])->default('initiated');
-            $table->json('gateway_response')->nullable();
-            $table->timestamps();
+        Schema::table('registrations', function (Blueprint $table) {
+            // Add new columns
+            $table->string('building_no', 50)->nullable()->after('photo');
+            $table->string('flat_no', 50)->nullable()->after('building_no');
+        });
+
+        // Migrate old `flat` values into `building_no` (best-effort)
+        if (Schema::hasColumn('registrations', 'flat')) {
+            \DB::table('registrations')
+                ->whereNull('building_no')
+                ->update(['building_no' => \DB::raw('`flat`')]);
+        }
+
+        // Drop the old column
+        Schema::table('registrations', function (Blueprint $table) {
+            if (Schema::hasColumn('registrations', 'flat')) {
+                $table->dropColumn('flat');
+            }
         });
     }
 
     public function down(): void
     {
-        Schema::dropIfExists('payments');
+        Schema::table('registrations', function (Blueprint $table) {
+            $table->string('flat')->nullable()->after('photo');
+        });
+
+        \DB::table('registrations')->update([
+            'flat' => \DB::raw('`building_no`'),
+        ]);
+
+        Schema::table('registrations', function (Blueprint $table) {
+            $table->dropColumn(['building_no', 'flat_no']);
+        });
     }
 };

@@ -11,7 +11,14 @@ return Application::configure(basePath: dirname(__DIR__))
         health: '/up',
     )
     ->withMiddleware(function (Middleware $middleware) {
-        // Append security headers to every web request
+        // Force HTTPS in production
+        if (app()->environment('production')) {
+            $middleware->web(prepend: [
+                \App\Http\Middleware\ForceHttps::class,
+            ]);
+        }
+
+        // Security headers on every web response
         $middleware->web(append: [
             \App\Http\Middleware\SecurityHeaders::class,
         ]);
@@ -21,7 +28,7 @@ return Application::configure(basePath: dirname(__DIR__))
             'admin' => \App\Http\Middleware\EnsureIsAdmin::class,
         ]);
 
-        // Trust proxies (needed for correct HTTPS detection behind load balancer)
+        // Trust proxies if behind load balancer
         $middleware->trustProxies(at: '*');
     })
     ->withExceptions(function (Exceptions $exceptions) {

@@ -5,7 +5,6 @@ namespace App\Http\Controllers;
 use App\Http\Requests\RegistrationRequest;
 use App\Models\Registration;
 use App\Services\SmsService;
-use Illuminate\Database\QueryException;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
@@ -22,62 +21,65 @@ class RegistrationController extends Controller
 
         DB::beginTransaction();
         try {
-            // ===== Extra safety: re-check duplicates inside transaction =====
-            $duplicate = Registration::where(function ($q) use ($validated) {
-                    $q->where('contact_no', $validated['contact_no'])
-                      ->orWhere('mfs_trn', $validated['mfs_trn']);
-                })
-                ->lockForUpdate()
-                ->first();
-
-            if ($duplicate) {
-                DB::rollBack();
-                $field = $duplicate->contact_no === $validated['contact_no']
-                    ? 'contact_no' : 'mfs_trn';
-
-                $message = $field === 'contact_no'
-                    ? "এই মোবাইল নাম্বার দিয়ে ইতিমধ্যে রেজিস্ট্রেশন করা হয়েছে। Reg ID: {$duplicate->registration_id}"
-                    : "এই Transaction ID আগেই ব্যবহৃত হয়েছে। Reg ID: {$duplicate->registration_id}";
-
-                return back()->withInput()->withErrors([$field => $message]);
-            }
-
-            // ===== Handle photo upload =====
+            // Profile photo
             if ($request->hasFile('avatar')) {
-                $path = $request->file('avatar')->store('photos', 'public');
-                $validated['photo'] = $path;
+                $validated['photo'] = $request->file('avatar')->store('photos', 'public');
+            }
+            unset($validated['avatar']);
+
+            // Bank slip
+            if ($request->hasFile('bank_slip')) {
+                $validated['bank_slip'] = $request->file('bank_slip')->store('bank-slips', 'public');
             }
 
-            unset($validated['avatar']);
+            // Cash receipt
+            if ($request->hasFile('cash_receipt')) {
+                $validated['cash_receipt'] = $request->file('cash_receipt')->store('cash-receipts', 'public');
+            }
+
+            // Clear other-method fields
+            $method = $validated['payment_method'];
+
+            if ($method !== 'bkash') {
+                $validated['mfs_no']  = null;
+                $validated['mfs_trn'] = null;
+            }
+
+            if ($method !== 'bank') {
+                $validated['bank_id']        = null;
+                $validated['bank_reference'] = null;
+                $validated['bank_slip']      = null;
+                $validated['paid_to_bank']   = null;
+            }
+
+            if ($method !== 'cash') {
+                $validated['cash_receipt_no'] = null;
+                $validated['cash_receipt']    = null;
+            }
+
             $validated['payment_status']  = 'pending';
             $validated['approval_status'] = 'pending';
 
             $registration = Registration::create($validated);
 
-            $sms->send(
+            $sms->sendTemplate(
                 $registration->contact_no,
-                "ধন্যবাদ {$registration->name_bn}! Reg ID: {$registration->registration_id}। ১০২০৳ বিকাশ করুন: 01761983617",
+                'welcome',
+                [
+                    'name'           => $registration->name_bn,
+                    'reg_id'         => $registration->registration_id,
+                    'amount'         => number_format($registration->membership_fee, 0),
+                    'payment_number' => '01761983617',
+                    'mobile'         => $registration->contact_no,
+                ],
                 'registration',
-                $registration->id
+                $registration->id,
+                "ধন্যবাদ {$registration->name_bn}! Reg ID: {$registration->registration_id}। ১০২০৳ পাঠান: 01761983617"
             );
 
             DB::commit();
 
             return redirect()->route('register.success', $registration->tracking_token);
-
-        } catch (QueryException $e) {
-            DB::rollBack();
-
-            // Handle DB-level unique constraint violations gracefully
-            if ($e->getCode() === '23000') {
-                $msg = str_contains($e->getMessage(), 'mfs_trn')
-                    ? 'এই Transaction ID আগেই ব্যবহৃত হয়েছে।'
-                    : 'এই মোবাইল নাম্বার দিয়ে ইতিমধ্যে রেজিস্ট্রেশন করা হয়েছে।';
-
-                return back()->withInput()->withErrors(['contact_no' => $msg]);
-            }
-
-            return back()->withInput()->withErrors(['error' => $e->getMessage()]);
         } catch (\Throwable $e) {
             DB::rollBack();
             return back()->withInput()->withErrors(['error' => $e->getMessage()]);

@@ -24,35 +24,29 @@ class EnsureIsAdmin
                 ->withErrors(['email' => 'Your account has been deactivated.']);
         }
 
-        // Role must be one of the allowed roles
+        // Role check
         if (!in_array($user->role, ['super_admin', 'admin', 'moderator'], true)) {
             abort(403, 'Unauthorized.');
         }
 
         // Moderator restrictions
         if ($user->role === 'moderator') {
-            $restrictedPaths = [
-                'admin/bkash-settings',
-                'admin/users',
-                'admin/settings',
-            ];
+            $restricted = ['admin/bkash-settings', 'admin/users', 'admin/settings'];
 
-            foreach ($restrictedPaths as $prefix) {
+            foreach ($restricted as $prefix) {
                 if (str_starts_with($request->path(), $prefix)) {
                     abort(403, 'Moderators cannot access this section.');
                 }
             }
 
-            // Block write actions on registrations
-            $writeAction = '#^admin/registrations/\d+/(verify-payment|reject-payment|approve|reject)$#';
-            if (preg_match($writeAction, $request->path())) {
+            if (preg_match('#^admin/registrations/\d+/(verify-payment|reject-payment|approve|reject)$#', $request->path())) {
                 abort(403, 'Moderators cannot approve or verify.');
             }
         }
 
-        // Optional: IP whitelist for admin panel (production only)
+        // Optional: IP whitelist for production
         if (app()->environment('production')) {
-            $allowed = array_filter(explode(',', (string) config('services.admin.allowed_ips')));
+            $allowed = array_filter(explode(',', (string) config('services.admin.allowed_ips', '')));
             if (!empty($allowed) && !in_array($request->ip(), $allowed, true)) {
                 abort(403, 'Admin panel is restricted from your location.');
             }

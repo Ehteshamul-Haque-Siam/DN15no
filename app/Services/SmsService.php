@@ -3,123 +3,169 @@
 namespace App\Services;
 
 use App\Models\SmsLog;
+use App\Models\SmsTemplate;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
 class SmsService
 {
     /**
-     * Send an SMS and log the attempt.
-     *
-     * @param  string  $mobile  BD format: 01XXXXXXXXX
-     * @param  string  $message  UTF-8 — Bengali supported
-     * @param  string  $type  registration | payment | approval | rejection | otp
-     * @param  int|null  $regId  Optional registration ID for linking
+     * Send an SMS using a template key.
      */
-    public function send(string $mobile, string $message, string $type = 'registration', ?int $regId = null): void
+    public function sendTemplate(
+        string $mobile,
+        string $templateKey,
+        array $data,
+        string $type = 'registration',
+        ?int $regId = null,
+        string $fallback = ''
+    ): void {
+        $body = SmsTemplate::bodyFor($templateKey, $fallback);
+        $message = $this->render($body, $data);
+
+        $this->sendRaw($mobile, $message, $type, $regId);
+    }
+
+    /**
+     * Send an SMS with a raw (already-composed) message.
+     */
+    public function sendRaw(string $mobile, string $message, string $type = 'registration', ?int $regId = null): void
     {
-        // 1. Log first
         $log = SmsLog::create([
             'registration_id' => $regId,
-            'mobile' => $mobile,
-            'message' => $message,
-            'type' => $type,
-            'status' => 'queued',
+            'mobile'          => $mobile,
+            'message'         => $message,
+            'type'            => $type,
+            'status'          => 'queued',
         ]);
 
-        // 2. Dry run
-        if (! config('services.sms.enabled')) {
+        if (!config('services.sms.enabled')) {
             $log->update([
-                'status' => 'sent',
+                'status'   => 'sent',
                 'response' => 'SMS disabled via SMS_ENABLED=false (dry run).',
             ]);
-            Log::info('[SMS-DRY] '.$mobile.' | '.$message);
-
+            Log::info('[SMS-DRY] ' . $mobile . ' | ' . $message);
             return;
         }
 
-        // 3. Validate BD mobile
         $clean = preg_replace('/\D/', '', $mobile);
-        if (! preg_match('/^01[3-9]\d{8}$/', $clean)) {
+        if (!preg_match('/^(01[3-9]\d{8}|8801[3-9]\d{8})$/', $clean)) {
             $log->update([
-                'status' => 'failed',
-                'response' => 'Invalid BD mobile: '.$mobile,
+                'status'   => 'failed',
+                'response' => 'Invalid BD mobile: ' . $mobile,
             ]);
-
             return;
         }
 
-        // 4. Send via gateway
         try {
-            $gateway = config('services.sms.gateway', 'routemobile');
-
-            $response = match ($gateway) {
-                'routemobile' => $this->sendViaRouteMobile($clean, $message),
-                'bulksmsbd' => $this->sendViaBulkSmsBd($mobile, $message),
-                default => throw new \Exception("Unknown SMS gateway: {$gateway}"),
-            };
+            $response = $this->sendViaRouteMobile($mobile, $message);
 
             $log->update([
-                'status' => ($response['success'] ?? false) ? 'sent' : 'failed',
+                'status'   => ($response['success'] ?? false) ? 'sent' : 'failed',
                 'response' => json_encode($response, JSON_UNESCAPED_UNICODE),
             ]);
 
-            if (! ($response['success'] ?? false)) {
-                Log::warning('[SMS] Gateway returned failure', $response);
+            if (!($response['success'] ?? false)) {
+                Log::warning('[SMS] Gateway failure', $response);
             }
         } catch (\Throwable $e) {
             $log->update([
-                'status' => 'failed',
+                'status'   => 'failed',
                 'response' => $e->getMessage(),
             ]);
-            Log::error('[SMS] Exception: '.$e->getMessage());
+            Log::error('[SMS] Exception: ' . $e->getMessage());
         }
     }
 
     /**
-     * Route Mobile — Personalized Bulk SMS. Returns "1701|<mobile>|<message_id>" on success.
+     * Backward-compatible send() — sends a raw message.
      */
-    protected function sendViaRouteMobile(string $phone, string $message): array
+    public function send(string $mobile, string $message, string $type = 'registration', ?int $regId = null): void
     {
-        // Bengali is sent as plain UTF-8 — the gateway delivers hex-encoded text literally.
-        $response = Http::get('http://apibd.rmlconnect.net/bulksms/personalizedbulksms', [
-            'username' => config('services.sms.username'),
-            'password' => config('services.sms.password'),
-            'source' => config('services.sms.sender'),
-            'destination' => '88'.$phone,
-            'message' => $message,
-        ]);
-
-        return [
-            'success' => str_starts_with($response->body(), '1701'),
-            'raw' => $response->body(),
-        ];
+        $this->sendRaw($mobile, $message, $type, $regId);
     }
 
     /**
-     * Bulk SMS BD fallback.
+     * Replace {placeholder} tokens with values.
      */
-    protected function sendViaBulkSmsBd(string $mobile, string $message): array
+    protected function render(string $body, array $data): string
     {
-        $type = preg_match('/[\x{0980}-\x{09FF}]/u', $message) ? 'unicode' : 'text';
+        $replacements = [];
+        foreach ($data as $key => $value) {
+            $replacements['{' . $key . '}'] = (string) $value;
+        }
+        return strtr($body, $replacements);
+    }
 
-        $res = Http::timeout(20)->asForm()->post(
-            config('services.sms.endpoint'),
-            [
-                'api_key' => config('services.sms.key'),
-                'type' => $type,
-                'number' => $mobile,
-                'senderid' => config('services.sms.sender'),
-                'message' => $message,
-            ]
-        );
+    /**
+     * Route Mobile Bulk HTTP API.
+     */
+    protected function sendViaRouteMobile(string $phone, string $message): array
+    {
+        $user   = config('services.sms.username');
+        $pass   = config('services.sms.password');
+        $sender = config('services.sms.sender');
+        $server = config('services.sms.server') ?: 'apibd.rmlconnect.net';
+        $port   = config('services.sms.port')   ?: '80';
 
-        $body = $res->json() ?? [];
+        if (empty($user) || empty($pass) || empty($sender)) {
+            return ['success' => false, 'error' => 'SMS config incomplete.'];
+        }
 
-        return [
-            'success' => ($body['response_code'] ?? 0) == 202,
-            'response_code' => $body['response_code'] ?? null,
-            'raw' => $body,
-        ];
+        $clean  = preg_replace('/\D/', '', $phone);
+        $mobile = '88' . ltrim($clean, '0');
+
+        $isUnicode = preg_match('/[\x{0980}-\x{09FF}]/u', $message) === 1;
+        $type      = $isUnicode ? '2' : '0';
+        $dlr       = '1';
+
+        $messageEncoded = $isUnicode ? $this->toUnicodeHex($message) : $message;
+
+        $url = "http://{$server}:{$port}/bulksms/bulksms";
+
+        try {
+            $response = Http::timeout(25)
+                ->retry(2, 500, throw: false)
+                ->get($url, [
+                    'username'    => $user,
+                    'password'    => $pass,
+                    'type'        => $type,
+                    'dlr'         => $dlr,
+                    'destination' => $mobile,
+                    'source'      => $sender,
+                    'message'     => $messageEncoded,
+                ]);
+
+            $body  = trim($response->body());
+            $parts = explode('|', $body);
+            $code  = $parts[0] ?? '';
+
+            return [
+                'success'    => $code === '1701',
+                'error_code' => $code,
+                'message_id' => $parts[2] ?? null,
+                'raw'        => $body,
+                'type_sent'  => $type,
+            ];
+        } catch (\Throwable $e) {
+            return ['success' => false, 'error' => 'HTTP error: ' . $e->getMessage()];
+        }
+    }
+
+    protected function toUnicodeHex(string $message): string
+    {
+        if (function_exists('iconv')) {
+            $converted = @iconv('UTF-8', 'UCS-2BE', $message);
+            if ($converted !== false && $converted !== '') {
+                return strtoupper(bin2hex($converted));
+            }
+        }
+        if (function_exists('mb_convert_encoding')) {
+            $converted = @mb_convert_encoding($message, 'UTF-16BE', 'UTF-8');
+            if ($converted !== false && $converted !== '') {
+                return strtoupper(bin2hex($converted));
+            }
+        }
+        return '';
     }
 }
